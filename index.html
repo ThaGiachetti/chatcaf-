@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chatbot das cafeterias de São Paulo</title>
+<style>
+  :root {
+    --primaria: #B3261E; --secundaria: #2F5DA8; --secundaria-clara: #B4C6E4;
+    --destaque: #D2793F; --destaque-escura: #A85A27;
+    --parede: #EFE6DA; --azulejo: #F7F5F1; --linha: #DDD2C4; --apoio: #75604E; --texto: #2A1512;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { font-family: system-ui, sans-serif; background: var(--azulejo); color: var(--texto); line-height: 1.5; }
+  main { max-width: 600px; margin: 0 auto; padding: 32px 16px; }
+  h1 { font: clamp(1.7rem, 5vw, 2.4rem)/1.1 Georgia, serif; color: var(--primaria); }
+  .sub { margin: 8px 0 20px; color: var(--apoio); }
+  .chat { display: flex; flex-direction: column; height: 68vh; min-height: 420px; border: 1px solid var(--linha);
+    border-radius: 8px; background: #fff; overflow: hidden; }
+  #msgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+  .msg { max-width: 85%; padding: 10px 14px; border-radius: 10px; white-space: pre-line; overflow-wrap: anywhere; }
+  .bot { align-self: flex-start; background: var(--parede); border-bottom-left-radius: 2px; }
+  .eu { align-self: flex-end; background: var(--secundaria); color: #fff; border-bottom-right-radius: 2px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 16px 12px; }
+  .chip { font: inherit; font-size: .9rem; padding: 6px 12px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--secundaria); background: #fff; color: var(--secundaria); }
+  .chip:hover { background: var(--secundaria-clara); }
+  form { display: flex; gap: 8px; padding: 12px; border-top: 1px solid var(--linha); background: var(--azulejo); }
+  input { flex: 1; font: inherit; padding: 10px 12px; border: 1px solid var(--linha); border-radius: 6px; min-width: 0; }
+  button.enviar { font: inherit; font-weight: 600; padding: 10px 18px; border: 0; border-radius: 6px; cursor: pointer;
+    background: var(--destaque); color: var(--texto); }
+  button.enviar:hover { background: var(--destaque-escura); color: #fff; }
+  input:focus-visible, button:focus-visible { outline: 3px solid var(--secundaria); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Onde tomar café em São Paulo?</h1>
+  <p class="sub">Converse com o guia de cafeterias. Os dados abaixo são exemplos: troque pelos reais no código.</p>
+  <div class="chat">
+    <div id="msgs" aria-live="polite"></div>
+    <div class="chips" id="chips"></div>
+    <form id="form" autocomplete="off">
+      <input id="entrada" type="text" placeholder="Ex.: cafeterias na Liberdade" aria-label="Sua mensagem">
+      <button class="enviar" type="submit">Enviar</button>
+    </form>
+  </div>
+</main>
+<script>
+  // ===== DADOS (edite aqui) =====
+  const cafeterias = [
+    { nome: 'Café da Esquina', bairro: 'Sé', tipos: ['espresso', 'doce'], horario: '8h às 18h', info: 'Mesas na calçada e torra média.' },
+    { nome: 'Casa do Coado', bairro: 'Triângulo Histórico', tipos: ['coado', 'brunch'], horario: '9h às 17h', info: 'Cafés filtrados e salgados leves.' },
+    { nome: 'Grão Vermelho', bairro: 'República', tipos: ['espresso', 'vegano'], horario: '7h30 às 19h', info: 'Opções veganas e balcão de espresso.' },
+    { nome: 'Mirante Copan', bairro: 'Copan', tipos: ['doce', 'brunch'], horario: '10h às 20h', info: 'Bolos caseiros e brunch.' },
+    { nome: 'Bule Azul', bairro: 'Liberdade', tipos: ['coado', 'vegano', 'doce'], horario: '9h às 18h', info: 'Coado, doces veganos e chás.' }
+  ];
+  const bairros = {
+    'Sé': ['se'], 'Triângulo Histórico': ['triangulo', 'historico'], 'República': ['republica'],
+    'Copan': ['copan'], 'Liberdade': ['liberdade']
+  };
+  const tipos = {
+    espresso: ['espresso', 'expresso', 'cafezinho'], coado: ['coado', 'filtrado', 'v60'],
+    doce: ['doce', 'doces', 'bolo', 'sobremesa'], vegano: ['vegano', 'vegana', 'veganos'],
+    brunch: ['brunch', 'salgado', 'salgados', 'almoco']
+  };
+  const sugestoes = ['Ver todas', 'Cafeterias na Sé', 'Algo vegano', 'Café coado', 'Horários'];
+
+  // ===== LÓGICA =====
+  const msgs = document.getElementById('msgs');
+  const entrada = document.getElementById('entrada');
+
+  function normalizar(t) {
+    return t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  }
+  function adicionar(texto, classe) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + classe;
+    d.textContent = texto;
+    msgs.appendChild(d);
+    msgs.scrollTop = msgs.scrollHeight;
+  }
+  function lista(itens, comHorario) {
+    return itens.map(function (c) {
+      return '• ' + c.nome + ' (' + c.bairro + ')' + (comHorario ? ': ' + c.horario : ' - ' + c.info);
+    }).join('\n');
+  }
+  function responder(texto) {
+    const tokens = normalizar(texto).split(/[^a-z0-9]+/).filter(Boolean);
+    const tem = function (palavras) { return palavras.some(function (p) { return tokens.indexOf(p) !== -1; }); };
+
+    const bairro = Object.keys(bairros).filter(function (b) { return tem(bairros[b]); });
+    const tipo = Object.keys(tipos).filter(function (t) { return tem(tipos[t]); });
+    const quer = {
+      oi: tem(['oi', 'ola', 'bom', 'boa', 'e']) && tokens.length <= 3,
+      todas: tem(['todas', 'todos', 'lista', 'listar', 'cafeterias']),
+      horario: tem(['horario', 'horarios', 'abre', 'fecha', 'aberto', 'aberta']),
+      obrigado: tem(['obrigado', 'obrigada', 'valeu']),
+      ajuda: tem(['ajuda', 'help', 'como'])
+    };
+
+    let achadas = cafeterias.filter(function (c) {
+      return (!bairro.length || bairro.indexOf(c.bairro) !== -1) &&
+             (!tipo.length || tipo.every(function (t) { return c.tipos.indexOf(t) !== -1; }));
+    });
+
+    if (quer.obrigado) return 'Por nada! Bom café.';
+    if (bairro.length || tipo.length) {
+      if (!achadas.length) return 'Não encontrei cafeterias com esse filtro. Tente outro bairro ou tipo de café.';
+      return 'Encontrei ' + achadas.length + ':\n' + lista(achadas, quer.horario);
+    }
+    if (quer.horario) return 'Horários:\n' + lista(cafeterias, true);
+    if (quer.todas) return 'Todas as cafeterias:\n' + lista(cafeterias, false);
+    if (quer.oi || quer.ajuda) {
+      return 'Olá! Posso indicar cafeterias por bairro (Sé, Triângulo Histórico, República, Copan, Liberdade) ou por tipo (espresso, coado, doce, vegano, brunch).';
+    }
+    return 'Não entendi. Tente um bairro, um tipo de café ou clique em uma sugestão.';
+  }
+  function enviar(texto) {
+    texto = texto.trim();
+    if (!texto) return;
+    adicionar(texto, 'eu');
+    setTimeout(function () { adicionar(responder(texto), 'bot'); }, 350);
+  }
+
+  document.getElementById('chips').innerHTML = sugestoes.map(function (s) {
+    return '<button type="button" class="chip">' + s + '</button>';
+  }).join('');
+  document.querySelectorAll('.chip').forEach(function (b) {
+    b.addEventListener('click', function () { enviar(b.textContent); });
+  });
+  document.getElementById('form').addEventListener('submit', function (e) {
+    e.preventDefault();
+    enviar(entrada.value);
+    entrada.value = '';
+  });
+  adicionar('Olá! Sou o guia de cafeterias de São Paulo. Pergunte por bairro ou tipo de café.', 'bot');
+</script>
+</body>
+</html>
